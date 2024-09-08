@@ -64,3 +64,7 @@ MaciSdkContractAddress=0x1234567890123456789012345678901234567890
 ## Contributing
 
 We welcome contributions to this project. Please read our [contributing guidelines](CONTRIBUTING.md) for more details.
+
+## License
+
+This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for more details.
