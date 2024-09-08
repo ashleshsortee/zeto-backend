@@ -2,13 +2,14 @@
 
 import { Router, Request, Response } from "express";
 import { ethers, BigNumberish } from "ethers";
-import { newUser, newUTXO, User, UTXO } from "../lib/utils";
+import { newUser, newUTXO, User, UTXO, ZERO_UTXO } from "../lib/utils";
 import { loadCircuit, encodeProof } from "../lib/zkp/js";
 import { readFileSync } from "fs";
 import * as path from "path";
 import { groth16 } from "snarkjs";
 import { parseEther } from "viem";
 import { formatPrivKeyForBabyJub, stringifyBigInts } from "maci-crypto";
+import { deleteMany, findOne, insertOne, updateOne } from "../lib/db";
 
 const router = Router();
 const ZERO_PUBKEY = [0, 0];
@@ -148,40 +149,47 @@ async function prepareProof(
     encodedProof,
   };
 }
-let sender = {
-  signer: {
-    provider: {},
-    address: "0xD14Ea1ed35DcE48BE3375aA1162F2B2d6A33a465",
-  },
-  ethAddress: "0xD14Ea1ed35DcE48BE3375aA1162F2B2d6A33a465",
-  babyJubPrivateKey:
-    6324256280312473777967681696479815890870889009628290542929508861189431680681n,
-  babyJubPublicKey: [
-    12272621234975364082857678671838395038892879583462041976847058442189389028017n,
-    280747620178470772301510133895636708710150648976680629139476716976969856109n,
-  ],
-  formattedPrivateKey:
-    6796525494593858591117563813831186312580968701825023242962350832043485719797n,
-};
+let sender;
 
 // Example API route
 router.post("/generate-proof", async (req: Request, res: Response) => {
-  const provider = new ethers.JsonRpcProvider(
-    "https://sepolia.infura.io/v3/a17f5301f00345d88ecae1cbd724e4af"
-  );
-  const privateKey =
-    "0x39d4d54b595b40d36ff118b16cadba2e6accf001030cbc457d5c5ce86f74fd4d";
+  const provider = new ethers.JsonRpcProvider("https://testnet.hashio.io/api");
+  const privateKey = "<pvt key here>";
   const signer = new ethers.Wallet(privateKey, provider);
 
-  if (!sender) {
+  const dbRes = await findOne("signer", req.body.address);
+
+  if (dbRes.length > 0) {
+    sender = dbRes[0];
+  }
+
+  if (dbRes.length === 0) {
     console.log("creating new sender...");
     sender = await newUser(signer);
+
+    console.log("console sender", sender);
+
+    const insertResult = await insertOne("signer", {
+      ...sender,
+      babyJubPrivateKey: sender.babyJubPrivateKey.toString(),
+      babyJubPublicKey: sender.babyJubPublicKey.map((key) => key.toString()), // Convert each key in the array
+      formattedPrivateKey: sender.formattedPrivateKey.toString(),
+    });
+    console.log("console insertResult", insertResult);
   }
 
   console.log("console sender", sender);
 
   const utxo = newUTXO(req.body.amount, sender); // 10
   console.log("console utxo", utxo);
+
+  const insertUTXO = await insertOne("utxo", {
+    ethAddress: req.body.address,
+    ...utxo,
+    hash: utxo.hash.toString(),
+    salt: utxo.salt?.toString(),
+  });
+  console.log("console insertResult", insertUTXO);
 
   const result = await prepareDepositProof(sender, utxo);
 
@@ -195,52 +203,87 @@ router.post("/generate-proof", async (req: Request, res: Response) => {
   res.send(jsonString);
 });
 
-router.get("/transfer-proof", async (req: Request, res: Response) => {
+router.post("/transfer-proof", async (req: Request, res: Response) => {
   try {
     // sender's input UTXOs
     const provider = new ethers.JsonRpcProvider(
-      "https://sepolia.infura.io/v3/a17f5301f00345d88ecae1cbd724e4af"
+      "https://testnet.hashio.io/api"
     );
-    // const privateKey =
-    //   "0x39d4d54b595b40d36ff118b16cadba2e6accf001030cbc457d5c5ce86f74fd4d";
-    // const signer = new ethers.Wallet(privateKey, provider);
-    // const sender = await newUser(signer);
+
+    const dbRes = await findOne("signer", req.body.address);
+
+    if (dbRes.length > 0) {
+      sender = {
+        ...dbRes[0],
+        babyJubPrivateKey: BigInt(dbRes[0].babyJubPrivateKey),
+        babyJubPublicKey: dbRes[0].babyJubPublicKey.map((key) => BigInt(key)), // Convert each key in the array
+        formattedPrivateKey: BigInt(dbRes[0].formattedPrivateKey),
+      };
+
+      console.log("console sender BigInt", sender);
+    }
+
+    const senderUTXOs = await findOne("utxo", req.body.address);
+    console.log("console senderUTXOs", senderUTXOs);
 
     const utxo1 = {
-      value: "10",
-      hash: 3646291598752793754812933173898622836657192711694616877305564630588289935803n,
-      salt: 20583737005007232339264018572951112929802360873831628502911119219849902591987n,
+      ...senderUTXOs[0],
+      hash: BigInt(senderUTXOs[0].hash),
+      salt: BigInt(senderUTXOs[0].salt),
     };
 
-    const utxo2 = {
-      value: "20",
-      hash: 10515388575941427783546410489884679101503369017269496788303891446055934952156n,
-      salt: 4663863106882579818369667553312278345589314397324994849857636474205837176422n,
-    };
+    // const utxo1 = {
+    //   value: "10",
+    //   hash: 3646291598752793754812933173898622836657192711694616877305564630588289935803n,
+    //   salt: 20583737005007232339264018572951112929802360873831628502911119219849902591987n,
+    // };
+
+    // const utxo2 = {
+    //   value: "20",
+    //   hash: 10515388575941427783546410489884679101503369017269496788303891446055934952156n,
+    //   salt: 4663863106882579818369667553312278345589314397324994849857636474205837176422n,
+    // };
 
     // proposed output UTXOs
-    const recipientPvtKey =
-      "0x956cc3175563cab38cf9402334ba198325b3f3eb16335b3f3a627fd3dfaa6306";
+    const recipientPvtKey = "<pvtKey here>";
     const recipientSigner = new ethers.Wallet(recipientPvtKey, provider);
     const recipient = await newUser(recipientSigner);
 
-    const _txo3 = newUTXO(20, recipient);
-    const utxo4 = newUTXO(10, sender, _txo3.salt);
+    const _txo3 = newUTXO(req.body.amount, recipient);
+    // const utxo4 = newUTXO(10, sender, _txo3.salt);
+
+    console.log(
+      "testttt",
+      sender,
+      [utxo1, ZERO_UTXO],
+      [_txo3, ZERO_UTXO],
+      [recipient, sender]
+    );
 
     const result = await doTransfer(
       sender,
-      [utxo1, utxo2],
-      [_txo3, utxo4],
+      [utxo1, ZERO_UTXO],
+      [_txo3, ZERO_UTXO],
       [recipient, sender]
     );
     console.log("console result", { ...result, recipient, sender });
 
     const jsonString = JSON.stringify(
-      { ...result, owners: [recipient, sender] },
+      {
+        ...result,
+        owners: [recipient, sender],
+        utxoHash: utxo1.hash.toString(),
+        salt: utxo1.salt.toString(),
+      },
       (_, value) => (typeof value === "bigint" ? value.toString() : value)
     );
 
-    console.log("console result", result);
+    // await deleteMany("zeto", { hash: { $in: [utxo1.hash, utxo2.hash] } });
+
+    console.log("console result", {
+      ...result,
+      utxoHash: utxo1.hash.toString(),
+    });
 
     res.setHeader("Content-Type", "application/json");
     res.send(jsonString);
@@ -292,5 +335,38 @@ async function doTransfer(
 
   return result;
 }
+
+router.post("/updateUtxo", async (req, res) => {
+  try {
+    console.log("console req.utxi", req.body.utxoHash, req.body.recipient);
+
+    const filter = { hash: req.body.utxoHash }; // Example filter to match record
+
+    // Define the update operation (e.g., updating 'value')
+    const update = {
+      $set: {
+        ethAddress: req.body.recipient,
+      },
+    };
+
+    await updateOne("utxo", filter, update);
+    res.status(200);
+  } catch (err) {
+    console.log(err);
+    throw err;
+  }
+});
+
+router.post("/getUtxo", async (req, res) => {
+  try {
+    console.log("console req.utxi", req.body.ethAddress);
+
+    const resp = await findOne("utxo", req.body.ethAddress);
+    res.status(200).send(resp);
+  } catch (err) {
+    console.log(err);
+    throw err;
+  }
+});
 
 export default router;
