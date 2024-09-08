@@ -1,8 +1,7 @@
 # Zeto Backend Server
 
-This project is an Express-based API server that provides various endpoints for handling data operations. It includes endpoints to generate the proof for the zk-ecdsa signature scheme and also to verify it. It uses maci sdk for the zk-ecdsa signature scheme.
 
-## Table of Contents
+This repository serves as the backend layer for the Whisper Transactions app, providing APIs for:
 
 - [Installation](#installation)
 - [Usage](#usage)
@@ -11,9 +10,10 @@ This project is an Express-based API server that provides various endpoints for 
 - [Contributing](#contributing)
 - [License](#license)
 
-## Installation
 
 Install dependencies:
+```bash
+npm run install
 
 ```
 npm install
